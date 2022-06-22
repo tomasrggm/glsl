@@ -136,14 +136,33 @@ Ray getRay(Camera cam, vec2 pixel_sample)  //rnd pixel_sample viewport coordinat
 {
     vec2 ls = cam.lensRadius * randomInUnitDisk(gSeed);  //ls - lens sample for DOF
     float time = cam.time0 + hash1(gSeed) * (cam.time1 - cam.time0);
-    vec3 eye_offset = cam.eye + cam.u * ls.x + cam.v * ls.y;
-    vec3 ray_direction = vec3(cam.focusDist * cam.width * (pixel_sample.x / iResolution.x - 0.5), cam.focusDist * cam.height * (pixel_sample.y / iResolution.y - 0.5), -cam.focusDist * cam.planeDist);
 
-
-    
     //Calculate eye_offset and ray direction
+    vec3 ps;  //pixel samole or ray in camera coordinates
+    ps.x = cam.width * (pixel_sample.x / iResolution.x - 0.5);
+    ps.y = cam.height * (pixel_sample.y / iResolution.y - 0.5);
+    ps.z = -cam.planeDist;
 
-    return createRay(eye_offset, normalize(ray_direction.x * cam.u + ray_direction.y * cam.v + ray_direction.z * cam.n), time);
+    //para o dof
+    vec3 p;
+    p.x = ps.x * cam.focusDist;
+    p.y = ps.y * cam.focusDist;
+    p.z = ps.z * cam.focusDist;
+
+    //calculates ray in world coordinates
+    // vec3 vX = cam.u * ps.x;
+    // vec3 vY = cam.v * ps.y;
+    // vec3 vZ = cam.n * ps.z;
+    vec3 vX = cam.u * (p.x - ls.x);
+    vec3 vY = cam.v * (p.y - ls.y);
+    vec3 vZ = cam.n * p.z;
+    vec3 ray_dir = normalize((vX + vY + vZ));
+
+    //vec3 ray_direction = vec3(  p.x, cam.focusDist * cam.height * (pixel_sample.y / iResolution.y - 0.5), -cam.focusDist * cam.planeDist);
+    vec3 eye_offset = cam.eye + cam.u * ls.x + cam.v * ls.y;
+
+    //return createRay(eye_offset, normalize(ray_direction.x * cam.u + ray_direction.y * cam.v + ray_direction.z * cam.n), time);
+    return createRay(eye_offset, ray_dir, time);
 }
 
 // MT_ material type
@@ -207,7 +226,8 @@ struct HitRecord
     Material material;
 };
 
-bool customRefract (vec3 v, vec3 n, float niOverNt, out vec3 refracted){
+//baseeie-me no  manual ray tracing one weekend e funciona
+bool refract (vec3 v, vec3 n, float niOverNt, out vec3 refracted){
     vec3 uv = normalize(v);
     float dt = dot(uv,n);
     float discriminant = 1.0 - niOverNt * niOverNt * (1.0 - dt * dt);
@@ -219,6 +239,7 @@ bool customRefract (vec3 v, vec3 n, float niOverNt, out vec3 refracted){
 }
 
 
+//vimos na lab que esta bem
 float schlick(float cosine, float refIdx)
 {
 
@@ -232,9 +253,6 @@ float schlick(float cosine, float refIdx)
 
 
 
-vec3 metalSchlick(float cosine, vec3 F0){
-    return F0 + (1.0 - F0) * pow(clamp(1.0-cosine,0.0,1.0),5.0);
-}
 
 bool scatter(Ray rIn, HitRecord rec, out vec3 atten, out Ray rScattered)
 {
@@ -251,8 +269,13 @@ bool scatter(Ray rIn, HitRecord rec, out vec3 atten, out Ray rScattered)
     {
        //INSERT CODE HERE, consider fuzzy reflections
        vec3 refl = reflect(rIn.d,rec.normal);
+       float cosi = -dot(rIn.d,rec.normal);
+       float white = 1.0;
        rScattered = createRay(rec.pos + epsilon * rec.normal, normalize(refl + rec.material.roughness * randomInUnitSphere(gSeed)),rIn.t);
-       atten = metalSchlick(-dot(rIn.d,rec.normal),rec.material.specColor);
+       
+       //link que usei para resolver https://github.com/RayTracing/raytracing.github.io/issues/844 aqui faz sentido que seja a especular visto que e uma carateristica inerente a metais enquanto que albedo e mais para componentes difusas.
+       // alias bastava olhar para as funcoes de create material e percebia-se logo. albedo e 0 para metais.
+       atten = rec.material.specColor + ( 1.0 - rec.material.specColor ) * pow(clamp(1.0-cosi,0.0,1.0),5.0); 
        return true;
     }
     if(rec.material.type == MT_DIALECTRIC)
@@ -283,7 +306,7 @@ bool scatter(Ray rIn, HitRecord rec, out vec3 atten, out Ray rScattered)
 
         //if no total reflection  reflectProb = schlick(cosine, rec.material.refIdx);  
         //else reflectProb = 1.0;
-        if(customRefract(rIn.d,outwardNormal,niOverNt,refracted)){
+        if(refract(rIn.d,outwardNormal,niOverNt,refracted)){
             if(niOverNt > 1.0){
                 cosine =sqrt(1.0-niOverNt*niOverNt*(1.0-cosine*cosine));
             }
@@ -327,20 +350,28 @@ bool hit_triangle(Triangle t, Ray r, float tmin, float tmax, out HitRecord rec)
     //INSERT YOUR CODE HERE
     //calculate a valid t and normal
     //calculate a valid t and normal
-    vec3 v0v1 = t.b - t.a;
-    vec3 v0v2 = t.c - t.a;
-    rec.normal = normalize(cross(v0v1,v0v2));
-    if(abs(dot(rec.normal, r.d)) < 0.000001) return false;
+    vec3 top = t.b - t.a;
+    vec3 left = t.c - t.a;
+    vec3 cro = cross(r.d,left);
+    float det = dot(top,cro);
+    rec.normal = normalize(cross(top,left)); //formar normal como no proj1
+    if(abs(det) < 0.000001) return false;
 
-    vec3 svec = r.o - t.a;
-    float invDet = 1.0/ dot(v0v1,cross(r.d,v0v2));
-    float beta = (dot(svec,cross(r.d,v0v2))) * invDet;
-    if(beta < 0.0 || beta > 1.0) return false;
+    vec3 pointToOrigin = r.o - t.a;
+    float invDet = 1.0/ det;
 
-    float gamma = (dot(v0v1,cross(r.d,svec))) * invDet;
-    if(gamma < 0.0 || beta+gamma > 1.0) return false;
+    float u = dot(pointToOrigin,cro) * invDet;
+    if(u < 0.0 || u > 1.0){
+        return false;
+    } 
 
-    float temp = (dot(v0v1,cross(v0v2,svec))) * invDet;
+    vec3 cro2 = cross(pointToOrigin , top);
+    float v = dot(r.d,cro2) * invDet;
+    if(v < 0.0 || u+v > 1.0) {
+        return false;
+    }
+
+    float temp = (dot(top,cross(left,pointToOrigin))) * invDet;
     if(temp < tmax && temp > tmin)
     {
         rec.t = temp;
@@ -387,6 +418,7 @@ MovingSphere createMovingSphere(vec3 center0, vec3 center1, float radius, float 
 
 vec3 center(MovingSphere mvsphere, float time)
 {
+    //center captures the sphere moving linearly from one point to the other
     return mvsphere.center0 + ((time - mvsphere.time0) / (mvsphere.time1 - mvsphere.time0)) * (mvsphere.center1 - mvsphere.center0);
 }
 

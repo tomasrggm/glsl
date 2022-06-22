@@ -178,11 +178,11 @@ vec3 directlighting(pointLight pl, Ray r, HitRecord rec){
             if(rec.material.type == MT_DIFFUSE){
                 diffCol = rec.material.albedo / pi * i;
                 specCol = rec.material.specColor;
-                shininess = 4.0 / (pow(rec.material.roughness,4.0) + epsilon) - 2.0;
+                shininess = 4.0 / (pow(rec.material.roughness,4.0) + epsilon) - 2.0; //epsilon necessario como no assignment 1 para corrigir floating point error
             }
             if(rec.material.type == MT_METAL){
                 diffCol = rec.material.albedo;
-                specCol = metalSchlick(i,rec.material.specColor);
+                specCol = rec.material.specColor;
                 shininess = 8.0 / (pow(rec.material.roughness,4.0) + epsilon) - 2.0;
             }
             if(rec.material.type == MT_DIALECTRIC){
@@ -214,9 +214,9 @@ vec3 rayColor(Ray r)
         
         if(hit_world(r, 0.0, 10000.0, rec))
         {
-            bool outp = dot(r.d, rec.normal) < 0.0;
+            
             //calculate direct lighting with 3 white point lights:
-            if(outp)
+            if(dot(r.d, rec.normal) < 0.0)
             {
                 col += directlighting(createPointLight(vec3(-10.0, 15.0, 0.0), vec3(1.0, 1.0, 1.0)),r,rec) * throughput;
                 col += directlighting(createPointLight(vec3(8.0, 15.0, 3.0), vec3(1.0, 1.0, 1.0)),r,rec) * throughput;
